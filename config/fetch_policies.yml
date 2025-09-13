@@ -1,0 +1,370 @@
+# Políticas de coleta de dados do pipeline Yahoo Finance
+# Por bloco há a definição de:
+#   enabled: ativa/desativa a coleta
+#   frequency: granularidade de execução (cron-like abstrato ou rótulo lógico)
+#   schedule_window: janela preferencial (UTC) para rodar (evitar horas de mercado aberto se não for preciso)
+#   lookback_days / max_days / incremental: definição do escopo temporal
+#   mode: incremental | full_refresh | snapshot
+#   batch:
+#     size: quantos tickers por lote
+#     concurrency: quantos lotes simultâneos (se usar assíncrono)
+#   retry:
+#     max_attempts / backoff_strategy / base_delay / max_delay
+#   rate_limit: override de limites globais (requisições/seg)
+#   dependencies: pipelines que devem concluir antes
+#   retention: política de retenção para camada raw (bronze) e normalizada (silver)
+#   output:
+#     layer: bronze|silver|gold
+#     partitioning: chaves de particionamento sugeridas
+#   notes: comentários específicos
+#
+# Frequencies sugeridas (sem cron real ainda):
+#   daily, intraday_1h, intraday_15m, weekly, monthly, adhoc
+#
+# Feito para no futuro ser um orquestrador custom.
+meta:
+  version: 1
+  last_updated: "2025-09-13"
+  timezone_reference: "UTC"
+  global_defaults:
+    rate_limit_rps: 8              # Requisições por segundo padrão global
+    max_concurrency: 5
+    default_retry:
+      max_attempts: 4
+      backoff_strategy: exponential_jitter
+      base_delay_seconds: 1.0
+      max_delay_seconds: 15.0
+    default_batch:
+      size: 12
+      concurrency: 3
+    logging:
+      level: INFO
+      structured: true
+
+pipelines:
+
+  prices_daily:
+    enabled: true
+    description: "OHLCV diário + dividendos + splits via endpoint chart (interval=1d)."
+    frequency: daily
+    schedule_window: "22:00-01:00"   # Após fechamento média Europa, ajustável
+    mode: incremental
+    lookback_days: 30                # Recoleta últimos 30 dias para capturar ajustes/splits tardios
+    initial_backfill_years: 10       # Usado só quando não há histórico para o ticker
+    incremental_gap_check: true      # Verifica buracos de datas
+    batch:
+      size: 10
+      concurrency: 3
+    retry:
+      max_attempts: 5
+      backoff_strategy: exponential_jitter
+      base_delay_seconds: 1
+      max_delay_seconds: 20
+    rate_limit:
+      rps: 6
+    output:
+      layer: silver
+      partitioning:
+        - date
+        - ticker
+    retention:
+      bronze_days: 120
+      silver_days: 0          # 0 = manter indefinidamente
+    validation:
+      price_positive: true
+      volume_non_negative: true
+      deduplicate: true
+    dependencies: []
+    notes: "Executar depois que mercado Europeu fechou; pode rodar igualmente para B3 mudando janela."
+
+  prices_intraday:
+    enabled: false
+    description: "OHLC intraday (interval=15m/5m) — desativado inicialmente para simplificar."
+    frequency: intraday_15m
+    schedule_window: "08:00-17:30"
+    mode: incremental
+    lookback_days: 2
+    max_days_per_pull: 1
+    batch:
+      size: 5
+      concurrency: 2
+    retry:
+      max_attempts: 3
+      base_delay_seconds: 2
+    rate_limit:
+      rps: 4
+    output:
+      layer: silver
+      partitioning:
+        - date
+        - interval
+        - ticker
+    retention:
+      bronze_days: 14
+      silver_days: 30
+    notes: "Ativar apenas se intraday virar requisito; maior volume de chamadas."
+
+  quotes_snapshot:
+    enabled: true
+    description: "Snapshot de quotes (marketCap, regularMarketPrice, etc.) via batch /v7/finance/quote."
+    frequency: daily
+    schedule_window: "16:30-17:30"
+    times_per_day: 1          # no futuro pode ser 2 (abertura + fechamento)
+    mode: snapshot
+    batch:
+      size: 40                # batch grande porque endpoint aceita muitos tickers
+      concurrency: 2
+    rate_limit:
+      rps: 5
+    output:
+      layer: silver
+      partitioning:
+        - as_of_date
+    retention:
+      bronze_days: 30
+      silver_days: 365
+    dependencies:
+      - prices_daily
+    notes: "Usar para enriquecer com campos atuais de mercado e currency."
+
+  dividends_splits_refresh:
+    enabled: true
+    description: "Recoleta eventos de dividendos/splits (reforça consistência)."
+    frequency: weekly
+    schedule_window: "02:00-03:00"
+    mode: incremental
+    lookback_days: 400
+    batch:
+      size: 10
+      concurrency: 2
+    dependencies:
+      - prices_daily
+    notes: "Verifica divergências e recalcula campos derivados se necessário."
+
+  financials_statements:
+    enabled: true
+    description: "Income, Balance, Cashflow (históricos) via quoteSummary modules."
+    frequency: weekly
+    schedule_window: "03:00-04:00"
+    mode: full_refresh         # Recoleta tudo e detecta alterações
+    chunk_modules:
+      - incomeStatementHistory
+      - incomeStatementHistoryQuarterly
+      - balanceSheetHistory
+      - balanceSheetHistoryQuarterly
+      - cashflowStatementHistory
+      - cashflowStatementHistoryQuarterly
+    batch:
+      size: 4
+      concurrency: 2
+    retry:
+      max_attempts: 5
+      base_delay_seconds: 2
+      max_delay_seconds: 25
+    rate_limit:
+      rps: 3
+    output:
+      layer: bronze
+      partitioning:
+        - statement_type
+        - ticker
+    retention:
+      bronze_days: 0
+      silver_days: 0
+    store_versions: true
+    revision_tracking: true
+    dependencies: []
+    notes: "Normalização e pivot acontecem em pipeline separado (financials_normalize)."
+
+  financials_normalize:
+    enabled: true
+    description: "Converte JSON bruto das demonstrações em formato tabular normalizado."
+    frequency: weekly
+    schedule_window: "04:15-05:00"
+    mode: transform
+    input_source: financials_statements
+    output:
+      layer: silver
+      partitioning:
+        - statement_type
+        - period_end
+    dependencies:
+      - financials_statements
+    notes: "Apenas processamento local; sem chamadas externas."
+
+  earnings_calendar:
+    enabled: true
+    description: "Earnings históricos e futuros (EPS actual vs estimate)."
+    frequency: daily
+    schedule_window: "05:00-05:30"
+    mode: incremental
+    lookback_days: 120
+    batch:
+      size: 6
+      concurrency: 2
+    rate_limit:
+      rps: 4
+    dependencies: []
+    output:
+      layer: silver
+      partitioning:
+        - fiscal_year
+        - ticker
+    retention:
+      silver_days: 0
+    notes: "Usado para derivar features de distância até earnings."
+
+  analyst_trends:
+    enabled: true
+    description: "Recomendações de analistas e price targets."
+    frequency: daily
+    schedule_window: "06:00-06:30"
+    mode: snapshot
+    modules:
+      - recommendationTrend
+      - financialData
+      - defaultKeyStatistics
+    batch:
+      size: 5
+      concurrency: 2
+    rate_limit:
+      rps: 3
+    output:
+      layer: silver
+      partitioning:
+        - as_of_date
+    retention:
+      silver_days: 365
+    dependencies: []
+    notes: "Price targets podem ser usados para feature de desvio (target_mean / price)."
+
+  esg_scores:
+    enabled: false
+    description: "ESG scores (nem sempre disponíveis). Desativado inicialmente."
+    frequency: weekly
+    schedule_window: "07:00-07:30"
+    mode: snapshot
+    modules:
+      - esgScores
+    batch:
+      size: 4
+      concurrency: 1
+    notes: "Ativar apenas quando precisar de ESG; aumenta latência e falhas."
+
+  options_chain:
+    enabled: false
+    description: "Coleta chain de opções (expirações próximas)."
+    frequency: daily
+    schedule_window: "08:00-08:30"
+    mode: incremental
+    expirations_limit: 5
+    batch:
+      size: 3
+      concurrency: 1
+    rate_limit:
+      rps: 2
+    retention:
+      bronze_days: 14
+    notes: "Desativado; só ligar se planejar extrair implícita / skew."
+
+  indices_benchmark:
+    enabled: true
+    description: "Coleta índices de referência (Euro Stoxx 50, DAX, CAC, FTSE, etc.)."
+    frequency: daily
+    schedule_window: "22:10-23:00"
+    mode: incremental
+    lookback_days: 30
+    initial_backfill_years: 15
+    treat_as:
+      type: index
+      volatility_features: true
+    batch:
+      size: 8
+      concurrency: 2
+    dependencies: []
+    output:
+      layer: silver
+      partitioning:
+        - date
+        - symbol
+    notes: "Mesma lógica de prices_daily, mas lista separada (indices do YAML)."
+
+  fx_pairs_daily:
+    enabled: true
+    description: "Pares de câmbio relevantes (EURUSD, EURGBP, etc.)."
+    frequency: daily
+    schedule_window: "22:05-22:45"
+    mode: incremental
+    lookback_days: 30
+    initial_backfill_years: 10
+    batch:
+      size: 10
+      concurrency: 2
+    output:
+      layer: silver
+      partitioning:
+        - date
+        - pair
+    dependencies: []
+    notes: "Usado para conversões e features macro."
+
+  health_check:
+    enabled: true
+    description: "Validação pós-execução para garantir integridade mínima."
+    frequency: daily
+    schedule_window: "23:30-23:45"
+    mode: diagnostic
+    checks:
+      - prices_daily_rowcount
+      - missing_dates
+      - negative_prices
+      - duplicate_rows
+    dependencies:
+      - prices_daily
+      - quotes_snapshot
+    alerting:
+      on_failure: true
+    notes: "Pode enviar alerta (futuro) se falhar."
+
+  cleanup_retention:
+    enabled: true
+    description: "Remove dados raw expirados conforme política de retenção."
+    frequency: weekly
+    schedule_window: "01:00-02:00"
+    mode: maintenance
+    dry_run: false
+    dependencies: []
+    notes: "Executa operações de limpeza; cuidado com dry_run em produção."
+
+  backfill_historical_prices:
+    enabled: false
+    description: "Tarefa especial para reconstruir histórico completo (rodar manualmente)."
+    frequency: adhoc
+    mode: full_refresh
+    chunk_years: 5
+    batch:
+      size: 4
+      concurrency: 1
+    notes: "Ativar somente quando precisar reconstruir dataset completo para novos tickers."
+
+# Regras globais adicionais (podem ser usadas pelo orquestrador)
+global_rules:
+  enforce_dependency_order: true
+  stop_on_critical_failure:
+    - prices_daily
+    - financials_statements
+  alert_channels:
+    email: false
+    slack: false
+    stdout: true
+
+# Placeholders para futura parametrização dinâmica via variáveis de ambiente
+environment_overrides:
+  rate_limit_rps_env: FETCH_RATE_LIMIT_RPS
+  prices_daily_lookback_env: PRICES_DAILY_LOOKBACK
+  concurrency_override_env: FETCH_MAX_CONCURRENCY
+
+# Histórico de mudanças (log manual)
+changelog:
+  - date: "2025-09-13"
+    changes: "Criação inicial do arquivo de políticas."
