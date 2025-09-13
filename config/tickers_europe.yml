@@ -1,0 +1,276 @@
+# Coleta dos Ativos Europeus (Yahoo Finance)
+# Lista inicial de tickers europeus organizados por grupos.
+# Há a possibilidade de variação de ticket no Yahoo Finance (ex: SHEL.L vs SHEL.AS).
+meta:
+  version: 1
+  last_updated: "2025-09-13"
+  description: "Lista de tickers europeus (Yahoo Finance) organizada por grupos."
+
+# Conjunto inicial de blue chips amplamente negociados (mais relevantes)
+core_universe:
+  - SAP.DE          # Tecnologia empresarial - Alemanha
+  - ASML.AS         # Semicondutores - Holanda
+  - MC.PA           # LVMH - Luxo - França
+  - AIR.PA          # Airbus - Aeroespacial - França
+  - SAN.MC          # Banco Santander - Espanha
+  - ENEL.MI         # Energia / Utilities - Itália
+  - SHEL.L          # Shell - Energia - Reino Unido (listagem Londres; alternativa: SHEL.AS)
+  - BP.L            # BP - Energia - Reino Unido
+  - NESN.SW         # Nestlé - Consumo - Suíça
+  - NOVN.SW         # Novartis - Farma - Suíça
+  - RWE.DE          # Energia / renováveis - Alemanha
+  - OR.PA           # L'Oréal - Consumo / beleza - França
+  - BNP.PA          # BNP Paribas - Bancos - França
+  - DBK.DE          # Deutsche Bank - Alemanha
+  - ADYEN.AS        # Adyen - Fintech - Holanda
+
+# Fora a blue chips, é interessante ter essas ações (segunda fase)
+expansion_candidates:
+  - BAYN.DE         # Bayer - Químico / Farma
+  - SIE.DE          # Siemens - Indústria
+  - DTE.DE          # Deutsche Telekom - Telecom
+  - VOW3.DE         # Volkswagen (preference shares)
+  - BMW.DE          # BMW
+  - SU.PA           # Schneider Electric - Indústria / Energia
+  - ENI.MI          # ENI - Energia Itália
+  - ISP.MI          # Intesa Sanpaolo - Bancos
+  - IBE.MC          # Iberdrola - Energia Espanha
+  - ITX.MC          # Inditex (Zara) - Varejo
+  - PHIA.AS         # Philips - Equip. Médico / Eletrônicos
+  - ABI.BR          # AB InBev - Bebidas - Bélgica
+  - KER.PA          # Kering - Luxo
+  - SUHV.VI         # (Exemplo Áustria; valide disponibilidade real)
+  - VOLV-B.ST       # Volvo (Categoria B) - Suécia
+  - ERIC-B.ST       # Ericsson B - Telecom
+  - TELIA.ST        # Telia - Telecom
+  - NOKIA.HE        # Nokia - Finlândia
+  - FORTUM.HE       # Fortum - Energia - Finlândia
+  - ORSTED.CO       # Ørsted - Energia renovável - Dinamarca
+  - MAERSK-B.CO     # Maersk B - Logística
+  - CARL-B.CO       # Carlsberg B
+  - EQNR.OL         # Equinor - Noruega
+  - NHY.OL          # Norsk Hydro - Alumínio
+  - DNB.OL          # DNB Bank
+  - TOM.OL          # TGS / (Verificar) - Sísmica (placeholder para exemplo)
+  - TTE.PA          # TotalEnergies (alternativa à SHEL/BP)
+  - PUB.PA          # Publicis Groupe - Comunicação
+  - STM.MI          # STMicroelectronics
+  - UCG.MI          # UniCredit
+  - SGRE.MC         # Siemens Gamesa (pode ter pouca liquidez dependendo da fase)
+  - UHR.SW          # Swatch Group
+  - CSGN.SW         # Credit Suisse
+  - UBSG.SW         # UBS
+  - LONN.SW         # Lonza Group
+  - RO.PA           # Bouygues (infraestrutura) (ex: ticker pode variar)
+  - ACA.PA          # Crédit Agricole
+  - EN.PA           # Bouygues/Alstom/Engie verificar tickers caso reorganize (EN.PA = Bouygues? Engie = ENGI.PA)
+  - ENGI.PA         # Engie - Energia
+  - HO.PA           # Thales - Defesa
+  - DG.PA           # Vinci - Infraestrutura / Concessões
+  - VIV.PA          # Vivendi - Mídia
+  - AENA.MC         # Aena - Aeroportos
+  - FER.MC          # Ferrovial - Infraestrutura
+  - GRF.MC          # Grifols - Farma
+  - REL.L           # Relx - Informação / Dados
+  - ULVR.L          # Unilever - Consumo
+  - LSEG.L          # London Stock Exchange Group
+  - AZN.L           # AstraZeneca - Farma
+  - GSK.L           # GSK - Farma
+  - HSBA.L          # HSBC - Bancos
+  - BARC.L          # Barclays - Bancos
+  - NG.L            # National Grid - Utilities
+  - RR.L            # Rolls-Royce Holdings
+  - SPX.L           # Spirax-Sarco (exemplo mid cap — opcional)
+
+# Pares de FX importantes (úteis tipo as features)
+fx_pairs:
+  - EURUSD=X
+  - EURGBP=X
+  - EURCHF=X
+  - EURJPY=X
+  - EURBRL=X
+  - GBPUSD=X
+  - USDCHF=X
+
+# Índices de referência (para uso como variáveis exógenas)
+indices:
+  - ^STOXX50E       # Euro Stoxx 50
+  - ^GDAXI          # DAX
+  - ^FCHI           # CAC 40
+  - ^FTSE           # FTSE 100
+  - ^IBEX           # IBEX 35
+  - ^STOXX50        # (variação naming; validar qual disponível)
+  - ^OMXS30         # Suécia
+  - ^SSMI           # Swiss Market Index
+  - ^AEX            # Holanda
+  - ^BFX            # Bélgica
+  - ^MIB            # FTSE MIB (Itália)
+  - ^ATX            # Áustria
+  - ^OSEAX          # Noruega (às vezes baixa resolução)
+  - ^STOXX          # STOXX Europe 600
+
+# Agrupamentos por exchange (feito para facilitar loops condicionais)
+by_exchange:
+  xetra:
+    mic: XETR
+    timezone: Europe/Berlin
+    tickers:
+      - SAP.DE
+      - RWE.DE
+      - BAYN.DE
+      - SIE.DE
+      - DTE.DE
+      - VOW3.DE
+      - BMW.DE
+      - DBK.DE
+  euronext_paris:
+    mic: XPAR
+    timezone: Europe/Paris
+    tickers:
+      - MC.PA
+      - AIR.PA
+      - OR.PA
+      - BNP.PA
+      - KER.PA
+      - SU.PA
+      - PUB.PA
+      - ENGI.PA
+      - HO.PA
+      - DG.PA
+      - VIV.PA
+  euronext_amsterdam:
+    mic: XAMS
+    timezone: Europe/Amsterdam
+    tickers:
+      - ASML.AS
+      - ADYEN.AS
+      - PHIA.AS
+  borsa_italiana:
+    mic: XMIL
+    timezone: Europe/Rome
+    tickers:
+      - ENEL.MI
+      - ENI.MI
+      - ISP.MI
+      - STM.MI
+      - UCG.MI
+  madrid:
+    mic: XMAD
+    timezone: Europe/Madrid
+    tickers:
+      - SAN.MC
+      - IBE.MC
+      - ITX.MC
+      - AENA.MC
+      - FER.MC
+      - GRF.MC
+  london:
+    mic: XLON
+    timezone: Europe/London
+    tickers:
+      - SHEL.L
+      - BP.L
+      - REL.L
+      - ULVR.L
+      - LSEG.L
+      - AZN.L
+      - GSK.L
+      - HSBA.L
+      - BARC.L
+      - NG.L
+      - RR.L
+  six_switzerland:
+    mic: XSWX
+    timezone: Europe/Zurich
+    tickers:
+      - NESN.SW
+      - NOVN.SW
+      - UBSG.SW
+      - LONN.SW
+      - UHR.SW
+  nordics_mixed:
+    note: "Separado por país depois se preferir"
+    tickers:
+      - VOLV-B.ST
+      - ERIC-B.ST
+      - TELIA.ST
+      - NOKIA.HE
+      - FORTUM.HE
+      - ORSTED.CO
+      - MAERSK-B.CO
+      - CARL-B.CO
+      - EQNR.OL
+      - NHY.OL
+      - DNB.OL
+
+# Classificação setorial simples (GICS para uma expansão futura)
+sectors:
+  technology:
+    - SAP.DE
+    - ASML.AS
+    - ADYEN.AS
+    - ERIC-B.ST
+    - NOKIA.HE
+  semiconductors:
+    - ASML.AS
+    - STM.MI
+  industrials:
+    - AIR.PA
+    - SIE.DE
+    - RWE.DE
+    - VOW3.DE
+    - BMW.DE
+    - MAERSK-B.CO
+  energy:
+    - SHEL.L
+    - BP.L
+    - ENI.MI
+    - EQNR.OL
+    - RWE.DE
+    - ORSTED.CO
+    - ENEL.MI
+  utilities:
+    - ENEL.MI
+    - IBE.MC
+    - NG.L
+  consumer_defensive:
+    - NESN.SW
+    - ULVR.L
+    - OR.PA
+  consumer_cyclical:
+    - ITX.MC
+    - MC.PA
+    - KER.PA
+  financials:
+    - SAN.MC
+    - BNP.PA
+    - DBK.DE
+    - UBSG.SW
+    - HSBC.L
+    - BARC.L
+    - ISP.MI
+    - UCG.MI
+  healthcare:
+    - NOVN.SW
+    - AZN.L
+    - GSK.L
+    - BAYN.DE
+    - GRF.MC
+  luxury:
+    - MC.PA
+    - KER.PA
+    - OR.PA
+    - UHR.SW
+  energy_transition:
+    - ORSTED.CO
+    - RWE.DE
+    - ENEL.MI
+    - IBE.MC
+
+# Tickes que podem exigir validação / baixa liquidez / atenção (desligáveis)
+watchlist_optional:
+  - CSGN.SW    # Histórico problemático após aquisição / transição
+  - SGRE.MC    # Verificar listagem atual / fusões
+  - SUHV.VI    # Exemplo placeholder
+  - SPX.L      # Mid cap (pode ter spreads maiores)
+
