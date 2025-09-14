@@ -9,7 +9,7 @@ class RateLimiter:
     Evita bloqueios respeitando limites de requisições por minuto.
     """
 
-    def __init__(self, requests_per_minute: int = 15):
+    def __init__(self, requests_per_minute: int = 10):
         """
         Args:
             requests_per_minute: Número máximo de requisições por minuto (padrão: 15)
