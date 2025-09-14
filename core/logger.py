@@ -28,7 +28,7 @@ def setup_logger(name: str = "scraper", level: str = "INFO", log_dir: str = "log
     logger.propagate = False  # Evita mensagens duplicadas se root logger também estiver configurado
     log_path = Path(log_dir)
     log_path.mkdir(parents=True, exist_ok=True)
-    log_file = log_path / f"{name}_{datetime.now().strftime('%Y-%m-%d')}.json"
+    log_file = log_path / f"{name}_{datetime.now().strftime('%Y-%m-%d')}.ndjson"
     if not any(isinstance(h, logging.FileHandler) and h.baseFilename == str(log_file) for h in logger.handlers):
         file_handler = logging.FileHandler(log_file, encoding='utf-8')
         file_handler.setFormatter(JSONFormatter())
