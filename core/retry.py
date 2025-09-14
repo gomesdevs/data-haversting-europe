@@ -106,6 +106,36 @@ class RetryHandler:
 
         return False
 
+    def _calculate_delay_for_error(self, attempt: int, error: Exception) -> float:
+        """
+        Calcula delay específico baseado no tipo de erro.
+
+        Args:
+            attempt: Número da tentativa atual
+            error: Erro que ocorreu
+
+        Returns:
+            Delay em segundos
+        """
+        # Para 429 (Too Many Requests), usar delay muito maior
+        import requests
+        if (isinstance(error, requests.exceptions.HTTPError) and
+            hasattr(error, 'response') and error.response and
+            error.response.status_code == 429):
+
+            base_delay_429 = 30.0
+            delay = base_delay_429 * attempt
+
+            # Adiciona jitter para evitar thundering herd
+            if self.config.jitter:
+                jitter_range = delay * 0.25
+                delay += random.uniform(-jitter_range, jitter_range)
+                delay = max(15.0, delay)  # Mínimo 15s para 429
+
+            return min(delay, 120.0)  # Máximo 2 minutos
+
+        return self._calculate_delay(attempt)
+
     def execute(self, func: Callable, *args, **kwargs) -> Any:
         """
         Executa uma função com retry automático
@@ -166,21 +196,41 @@ class RetryHandler:
                     )
                     raise error
 
-                # Calcula delay para próxima tentativa
-                delay = self._calculate_delay(attempt)
+                # Calcula delay para próxima tentativa (específico para o tipo de erro)
+                delay = self._calculate_delay_for_error(attempt, error)
 
-                self.logger.warning(
-                    f"Tentativa {attempt} falhou, tentando novamente em {delay:.2f}s",
-                    extra={
-                        "attempt": attempt,
-                        "max_attempts": self.config.max_attempts,
-                        "function": func.__name__,
-                        "error_type": type(error).__name__,
-                        "error_message": str(error),
-                        "delay_seconds": delay,
-                        "next_attempt": attempt + 1
-                    }
-                )
+                # Log especial para 429s
+                import requests
+                is_429 = (isinstance(error, requests.exceptions.HTTPError) and
+                         hasattr(error, 'response') and error.response and
+                         error.response.status_code == 429)
+
+                if is_429:
+                    self.logger.warning(
+                        f"HTTP 429 (Too Many Requests) - aguardando {delay:.0f}s antes da próxima tentativa",
+                        extra={
+                            "attempt": attempt,
+                            "max_attempts": self.config.max_attempts,
+                            "function": func.__name__,
+                            "error_type": "HTTPError_429",
+                            "delay_seconds": delay,
+                            "next_attempt": attempt + 1,
+                            "rate_limit_backoff": True
+                        }
+                    )
+                else:
+                    self.logger.warning(
+                        f"Tentativa {attempt} falhou, tentando novamente em {delay:.2f}s",
+                        extra={
+                            "attempt": attempt,
+                            "max_attempts": self.config.max_attempts,
+                            "function": func.__name__,
+                            "error_type": type(error).__name__,
+                            "error_message": str(error),
+                            "delay_seconds": delay,
+                            "next_attempt": attempt + 1
+                        }
+                    )
 
                 time.sleep(delay)
 
