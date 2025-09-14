@@ -23,11 +23,17 @@ class JSONFormatter(logging.Formatter):
         return json.dumps(log_entry, ensure_ascii=False)
 
 def setup_logger(name: str = "scraper", level: str = "INFO", log_dir: str = "logs") -> logging.Logger:
-      # A fazer:
-      # 1. Usar JSONFormatter
-      # 2. Arquivo com data no nome (ex: scraper_2025-09-13.json)
-      # 3. Evitar handlers duplicados
-    pass
+    logger = logging.getLogger(name)
+    logger.setLevel(getattr(logging, level.upper()))  # Define o nível mínimo (mensagens abaixo são ignoradas)
+    logger.propagate = False  # Evita mensagens duplicadas se root logger também estiver configurado
+    log_path = Path(log_dir)
+    log_path.mkdir(parents=True, exist_ok=True)
+    log_file = log_path / f"{name}_{datetime.now().strftime('%Y-%m-%d')}.json"
+    if not any(isinstance(h, logging.FileHandler) and h.baseFilename == str(log_file) for h in logger.handlers):
+        file_handler = logging.FileHandler(log_file, encoding='utf-8')
+        file_handler.setFormatter(JSONFormatter())
+        logger.addHandler(file_handler)
+    return logger
 
 # Logger global
 logger = setup_logger()
