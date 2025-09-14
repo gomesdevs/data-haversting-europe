@@ -66,6 +66,30 @@ class RateLimiter:
         self.last_request_time = None
         self.logger.info("Rate limiter resetado")
 
+    def handle_429_error(self, backoff_multiplier: float = 2.0) -> None:
+        """
+        Aplica backoff adicional quando detecta 429 (Too Many Requests).
+
+        Args:
+            backoff_multiplier: Multiplicador para aumentar o intervalo temporariamente
+        """
+        additional_wait = self.min_interval * backoff_multiplier
+
+        self.logger.warning(
+            f"HTTP 429 detectado - aplicando backoff adicional",
+            extra={
+                "additional_wait_seconds": round(additional_wait, 2),
+                "current_interval": self.min_interval,
+                "backoff_multiplier": backoff_multiplier
+            }
+        )
+
+        # Força uma pausa extra
+        time.sleep(additional_wait)
+
+        # Atualiza o timestamp como se tivesse feito uma requisição
+        self.last_request_time = time.time()
+
     def get_status(self) -> dict:
         """
         Retorna status atual do rate limiter.
@@ -89,5 +113,8 @@ class RateLimiter:
         }
 
 
-# Instância global para uso em todo o projeto
-default_rate_limiter = RateLimiter()
+# Instância global para uso em todo o projeto (mais conservador para Yahoo Finance)
+default_rate_limiter = RateLimiter(requests_per_minute=3)  # Muito conservador: 20s entre requests
+
+# Rate limiter ultra-conservador para testes ou quando há muitos 429s
+ultra_conservative_limiter = RateLimiter(requests_per_minute=1)  # 60s entre requests
