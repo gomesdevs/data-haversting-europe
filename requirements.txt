@@ -8,7 +8,7 @@ requests==2.32.3      # Para implementação síncrona
 aiohttp==3.9.5       # Para implementação assíncrona
 
 # === Retry util ===
-tenacity==8.2.3
+python-dateutil==2.9.0.post0
 
 # === Storage / Parquet ===
 pyarrow==16.1.0
