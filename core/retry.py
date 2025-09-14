@@ -134,6 +134,7 @@ class RetryHandler:
 
             return min(delay, 120.0)  # Máximo 2 minutos
 
+        # Para outros erros, usar delay normal
         return self._calculate_delay(attempt)
 
     def execute(self, func: Callable, *args, **kwargs) -> Any:
