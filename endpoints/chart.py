@@ -1,6 +1,10 @@
 """
-Módulo especializado em coletar dados históricos de preços.
-Suporta diferentes intervalos e períodos com validação robusta de dados.
+Chart Data Collector - Alpha Vantage
+====================================
+
+Módulo especializado em coletar dados históricos de preços para forecasting.
+Migrado do Yahoo Finance para Alpha Vantage para maior confiabilidade.
+Mantém exatamente a mesma interface externa.
 """
 
 import pandas as pd
@@ -9,24 +13,25 @@ from typing import Dict, List, Optional, Union, Tuple
 from datetime import datetime, timedelta
 import time
 
-from core.http_client import YahooFinanceClient, default_client
+from core.alphavantage_client import AlphaVantageClient, default_alphavantage_client
 from core.logger import setup_logger
 
 
 class ChartDataCollector:
     """
-    Coletor especializado em dados de charts/preços do Yahoo Finance.
+    Coletor especializado em dados de charts/preços usando Alpha Vantage.
     Otimizado para projetos de forecasting com validação robusta.
+    Mantém mesma interface do Yahoo Finance para compatibilidade.
     """
 
-    # Intervalos suportados
+    # Intervalos suportados (para forecasting)
     VALID_INTERVALS = {
         '1d': 'Diário',
         '1wk': 'Semanal',
         '1mo': 'Mensal'
     }
 
-    # Períodos suportados
+    # Períodos suportados (Alpha Vantage específicos)
     VALID_PERIODS = {
         '5d': '5 dias',
         '1mo': '1 mês',
@@ -35,26 +40,27 @@ class ChartDataCollector:
         '1y': '1 ano',
         '2y': '2 anos',
         '5y': '5 anos',
-        'max': 'Máximo disponível'
+        'max': 'Máximo disponível (20+ anos)'
     }
 
-    def __init__(self, client: YahooFinanceClient = None):
+    def __init__(self, client: AlphaVantageClient = None):
         """
         Inicializa o coletor de dados de chart.
 
         Args:
-            client: Cliente HTTP personalizado (usa padrão se None)
+            client: Cliente Alpha Vantage personalizado (usa padrão se None)
         """
-        self.client = client or default_client
+        self.client = client or default_alphavantage_client
         self.logger = setup_logger("scraper.endpoints.chart")
 
         self.logger.info(
-            "Chart data collector inicializado",
+            "Chart data collector inicializado (Alpha Vantage)",
             extra={
                 "supported_intervals": list(self.VALID_INTERVALS.keys()),
                 "supported_periods": list(self.VALID_PERIODS.keys()),
                 "default_period": "5y",
-                "default_interval": "1d"
+                "default_interval": "1d",
+                "data_provider": "AlphaVantage"
             }
         )
 
@@ -81,9 +87,27 @@ class ChartDataCollector:
             valid_periods = ', '.join(self.VALID_PERIODS.keys())
             raise ValueError(f"Período '{period}' inválido. Válidos: {valid_periods}")
 
+    def _determine_outputsize(self, period: str) -> str:
+        """
+        Determina outputsize do Alpha Vantage baseado no período.
+
+        Args:
+            period: Período solicitado
+
+        Returns:
+            'compact' ou 'full'
+        """
+        # Alpha Vantage compact = últimos 100 pontos de dados
+        # Alpha Vantage full = até 20+ anos de dados
+
+        if period in ['5d', '1mo', '3mo']:
+            return 'compact'  # 100 pontos são suficientes
+        else:
+            return 'full'     # Precisamos de mais dados históricos
+
     def _fetch_raw_data(self, symbol: str, period: str, interval: str) -> Dict:
         """
-        Busca dados brutos do Yahoo Finance.
+        Busca dados brutos da Alpha Vantage.
 
         Args:
             symbol: Símbolo da ação
@@ -91,126 +115,152 @@ class ChartDataCollector:
             interval: Intervalo dos dados
 
         Returns:
-            Dados brutos do Yahoo Finance
+            Dados brutos da Alpha Vantage
 
         Raises:
             Exception: Se falhar na coleta ou dados inválidos
         """
-        url = f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}"
-
-        params = {
-            'period1': None,  # Será calculado baseado no period
-            'period2': int(time.time()),  # Até agora
-            'interval': interval,
-            'includePrePost': 'false',
-            'events': 'div,splits'  # Incluir dividendos e splits
-        }
-
-        # Calcular period1 baseado no período solicitado
-        now = datetime.now()
-        if period == '5d':
-            start_date = now - timedelta(days=5)
-        elif period == '1mo':
-            start_date = now - timedelta(days=30)
-        elif period == '3mo':
-            start_date = now - timedelta(days=90)
-        elif period == '6mo':
-            start_date = now - timedelta(days=180)
-        elif period == '1y':
-            start_date = now - timedelta(days=365)
-        elif period == '2y':
-            start_date = now - timedelta(days=730)
-        elif period == '5y':
-            start_date = now - timedelta(days=1825)
-        else:  # max
-            start_date = datetime(1970, 1, 1)  # Epoch
-
-        params['period1'] = int(start_date.timestamp())
+        # Determinar outputsize baseado no período
+        outputsize = self._determine_outputsize(period)
 
         self.logger.debug(
-            f"Buscando dados para {symbol}",
+            f"Buscando dados Alpha Vantage para {symbol}",
             extra={
                 "symbol": symbol,
                 "period": period,
                 "interval": interval,
-                "start_date": start_date.isoformat(),
-                "end_date": now.isoformat()
+                "outputsize": outputsize,
+                "data_provider": "AlphaVantage"
             }
         )
 
-        response = self.client.get(url, params=params)
-        data = response.json()
+        # Usar o cliente Alpha Vantage para buscar dados
+        data = self.client.get_data_for_interval(symbol, interval, outputsize)
 
-        # Validar estrutura da resposta
-        if 'chart' not in data:
-            raise ValueError(f"Resposta inválida do Yahoo Finance para {symbol}")
+        # Validar estrutura da resposta Alpha Vantage
+        if 'Error Message' in data:
+            raise ValueError(f"Erro Alpha Vantage para {symbol}: {data['Error Message']}")
 
-        chart = data['chart']
+        # Verificar se temos dados de série temporal
+        time_series_key = None
+        for key in data.keys():
+            if 'Time Series' in key:
+                time_series_key = key
+                break
 
-        if 'error' in chart and chart['error']:
-            error_msg = chart['error'].get('description', 'Erro desconhecido')
-            raise ValueError(f"Erro do Yahoo Finance para {symbol}: {error_msg}")
-
-        if not chart.get('result') or len(chart['result']) == 0:
-            raise ValueError(f"Nenhum dado encontrado para símbolo {symbol}")
+        if not time_series_key or not data.get(time_series_key):
+            available_keys = list(data.keys())
+            raise ValueError(f"Nenhum dado de série temporal encontrado para {symbol}. Chaves disponíveis: {available_keys}")
 
         return data
 
     def _parse_to_dataframe(self, raw_data: Dict, symbol: str) -> pd.DataFrame:
         """
-        Converte dados brutos em DataFrame estruturado.
+        Converte dados brutos da Alpha Vantage em DataFrame estruturado.
 
         Args:
-            raw_data: Dados brutos do Yahoo Finance
+            raw_data: Dados brutos da Alpha Vantage
             symbol: Símbolo da ação
 
         Returns:
-            DataFrame com dados de preços
+            DataFrame com dados de preços (mesma estrutura do Yahoo Finance)
         """
-        result = raw_data['chart']['result'][0]
+        # Encontrar a chave de série temporal
+        time_series_key = None
+        for key in raw_data.keys():
+            if 'Time Series' in key:
+                time_series_key = key
+                break
 
-        # Extrair timestamps e dados de preços
-        timestamps = result['timestamp']
-        indicators = result['indicators']['quote'][0]
+        if not time_series_key:
+            raise ValueError(f"Chave de série temporal não encontrada para {symbol}")
+
+        time_series_data = raw_data[time_series_key]
+
+        # Extrair metadados se disponíveis
+        metadata = raw_data.get('Meta Data', {})
+
+        # Converter dados Alpha Vantage para formato DataFrame
+        records = []
+
+        for date_str, price_data in time_series_data.items():
+            # Alpha Vantage usa diferentes formatos de chave dependendo do endpoint
+            # Mapeamento para formato consistente
+
+            if '1. open' in price_data:  # Formato daily/weekly/monthly
+                record = {
+                    'date': date_str,
+                    'open': float(price_data.get('1. open', 0)),
+                    'high': float(price_data.get('2. high', 0)),
+                    'low': float(price_data.get('3. low', 0)),
+                    'close': float(price_data.get('4. close', 0)),
+                    'volume': int(float(price_data.get('5. volume', 0))),
+                    'adj_close': float(price_data.get('5. adjusted close', price_data.get('4. close', 0)))  # Fallback para close se não tiver adjusted
+                }
+            elif 'open' in price_data:  # Formato alternativo
+                record = {
+                    'date': date_str,
+                    'open': float(price_data.get('open', 0)),
+                    'high': float(price_data.get('high', 0)),
+                    'low': float(price_data.get('low', 0)),
+                    'close': float(price_data.get('close', 0)),
+                    'volume': int(float(price_data.get('volume', 0))),
+                    'adj_close': float(price_data.get('adjusted close', price_data.get('close', 0)))
+                }
+            else:
+                # Log das chaves disponíveis para debug
+                available_keys = list(price_data.keys())
+                self.logger.warning(
+                    f"Formato inesperado de dados Alpha Vantage",
+                    extra={
+                        "symbol": symbol,
+                        "date": date_str,
+                        "available_keys": available_keys
+                    }
+                )
+                continue
+
+            records.append(record)
+
+        if not records:
+            raise ValueError(f"Nenhum registro válido encontrado para {symbol}")
 
         # Criar DataFrame
-        df = pd.DataFrame({
-            'timestamp': timestamps,
-            'open': indicators.get('open', []),
-            'high': indicators.get('high', []),
-            'low': indicators.get('low', []),
-            'close': indicators.get('close', []),
-            'volume': indicators.get('volume', [])
-        })
+        df = pd.DataFrame(records)
 
-        # Adicionar adjusted close se disponível
-        if 'adjclose' in result['indicators']:
-            adj_close = result['indicators']['adjclose'][0]['adjclose']
-            df['adj_close'] = adj_close
-        else:
-            df['adj_close'] = df['close']  # Fallback para close
-
-        # Converter timestamp para datetime
-        df['datetime'] = pd.to_datetime(df['timestamp'], unit='s')
+        # Converter date string para datetime
+        df['datetime'] = pd.to_datetime(df['date'])
         df['date'] = df['datetime'].dt.date
 
         # Adicionar metadados
-        meta = result['meta']
         df['symbol'] = symbol
-        df['currency'] = meta.get('currency', 'Unknown')
-        df['exchange'] = meta.get('exchangeName', 'Unknown')
+        df['currency'] = 'USD'  # Alpha Vantage padrão para TIME_SERIES_DAILY
 
-        # Reordenar colunas para melhor usabilidade
+        # Extrair exchange do símbolo se disponível (ex: ASML.AS = Amsterdam)
+        if '.' in symbol:
+            exchange_code = symbol.split('.')[1]
+            exchange_map = {
+                'AS': 'Amsterdam',
+                'L': 'London',
+                'DE': 'Frankfurt',
+                'PA': 'Paris',
+                'MI': 'Milan'
+            }
+            df['exchange'] = exchange_map.get(exchange_code, exchange_code)
+        else:
+            df['exchange'] = 'US'  # Símbolos sem sufixo são geralmente US
+
+        # Reordenar colunas para mesma estrutura do Yahoo Finance
         column_order = [
             'datetime', 'date', 'symbol', 'open', 'high',
             'low', 'close', 'adj_close', 'volume', 'currency', 'exchange'
         ]
         df = df[column_order]
 
-        # Remover linhas com dados nulos (fins de semana, feriados)
+        # Remover linhas com dados nulos
         df = df.dropna(subset=['open', 'high', 'low', 'close'])
 
-        # Ordenar por data
+        # Ordenar por data (Alpha Vantage vem em ordem reversa)
         df = df.sort_values('datetime').reset_index(drop=True)
 
         return df
