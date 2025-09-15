@@ -189,3 +189,128 @@ class FinancialDataValidator:
             )
 
         return result
+
+    def _validate_basic_structure(self, df: pd.DataFrame, symbol: str) -> List[Issue]:
+        """
+        Args:
+            df: DataFrame para validar
+            symbol: Símbolo da ação
+
+        Returns:
+            Lista de issues encontradas
+        """
+        issues = []
+
+        # Colunas obrigatórias que esperamos do chart.py
+        required_columns = {
+            'datetime': 'datetime64[ns]',
+            'date': 'object',
+            'symbol': 'object',
+            'open': 'float64',
+            'high': 'float64',
+            'low': 'float64',
+            'close': 'float64',
+            'adj_close': 'float64',
+            'volume': 'int64',
+            'currency': 'object',
+            'exchange': 'object'
+        }
+
+        # 1. Verificar se DataFrame não está vazio
+        if df.empty:
+            issues.append(Issue(
+                type=IssueType.MISSING_DATA,
+                severity=Severity.CRITICAL,
+                description="DataFrame está vazio",
+                symbol=symbol,
+                suggested_fix="Verificar coleta de dados da Alpha Vantage"
+            ))
+            return issues  # Não vale a pena continuar se vazio
+
+        # 2. Verificar colunas obrigatórias
+        missing_columns = set(required_columns.keys()) - set(df.columns)
+        if missing_columns:
+            issues.append(Issue(
+                type=IssueType.MISSING_DATA,
+                severity=Severity.CRITICAL,
+                description=f"Colunas obrigatórias ausentes: {list(missing_columns)}",
+                symbol=symbol,
+                suggested_fix="Verificar parsing do chart.py"
+            ))
+
+        # 3. Verificar tipos de dados das colunas presentes
+        for col, expected_type in required_columns.items():
+            if col in df.columns:
+                actual_type = str(df[col].dtype)
+
+                # Verificação mais flexível para tipos numéricos
+                if expected_type == 'float64' and not pd.api.types.is_numeric_dtype(df[col]):
+                    issues.append(Issue(
+                        type=IssueType.INVALID_TYPE,
+                        severity=Severity.CRITICAL,
+                        description=f"Coluna '{col}' deve ser numérica, encontrado: {actual_type}",
+                        symbol=symbol,
+                        suggested_fix=f"Converter {col} para float64"
+                    ))
+
+                elif expected_type == 'int64' and not pd.api.types.is_integer_dtype(df[col]):
+                    # Volume pode vir como float, isso é aceitável
+                    if col == 'volume' and pd.api.types.is_numeric_dtype(df[col]):
+                        issues.append(Issue(
+                            type=IssueType.INVALID_TYPE,
+                            severity=Severity.WARNING,
+                            description=f"Volume como {actual_type} será convertido para int64",
+                            symbol=symbol,
+                            suggested_fix="Converter volume para int64"
+                        ))
+                    else:
+                        issues.append(Issue(
+                            type=IssueType.INVALID_TYPE,
+                            severity=Severity.CRITICAL,
+                            description=f"Coluna '{col}' deve ser inteiro, encontrado: {actual_type}",
+                            symbol=symbol,
+                            suggested_fix=f"Converter {col} para int64"
+                        ))
+
+        # 4. Verificar valores nulos em colunas críticas
+        critical_columns = ['open', 'high', 'low', 'close', 'datetime']
+        for col in critical_columns:
+            if col in df.columns:
+                null_count = df[col].isnull().sum()
+                if null_count > 0:
+                    null_rows = df[df[col].isnull()].index.tolist()
+                    issues.append(Issue(
+                        type=IssueType.MISSING_DATA,
+                        severity=Severity.CRITICAL,
+                        description=f"Coluna crítica '{col}' tem {null_count} valores nulos",
+                        symbol=symbol,
+                        affected_rows=null_rows,
+                        suggested_fix="Remover linhas com dados de preço nulos"
+                    ))
+
+        # 5. Verificar valores nulos em colunas opcionais (só warning)
+        optional_columns = ['volume', 'adj_close']
+        for col in optional_columns:
+            if col in df.columns:
+                null_count = df[col].isnull().sum()
+                if null_count > 0:
+                    issues.append(Issue(
+                        type=IssueType.MISSING_DATA,
+                        severity=Severity.WARNING,
+                        description=f"Coluna '{col}' tem {null_count} valores nulos",
+                        symbol=symbol,
+                        suggested_fix=f"Interpolar ou usar valores padrão para {col}"
+                    ))
+
+        # 6. Verificar se há dados suficientes para análise
+        min_rows = 5  # Mínimo para qualquer análise financeira
+        if len(df) < min_rows:
+            issues.append(Issue(
+                type=IssueType.MISSING_DATA,
+                severity=Severity.CRITICAL,
+                description=f"Dados insuficientes: {len(df)} linhas (mínimo: {min_rows})",
+                symbol=symbol,
+                suggested_fix="Coletar mais dados históricos"
+            ))
+
+        return issues
