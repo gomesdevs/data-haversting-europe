@@ -457,3 +457,133 @@ class FinancialDataValidator:
             ))
 
         return issues
+
+    def _validate_temporal_sequence(self, df: pd.DataFrame, symbol: str) -> List[Issue]:
+        """
+        Validações de sequência temporal e gaps de mercado.
+
+        Args:
+            df: DataFrame para validar (deve estar ordenado por data)
+            symbol: Símbolo da ação
+
+        Returns:
+            Lista de issues encontradas
+        """
+        issues = []
+
+        # Verificar se temos a coluna datetime
+        if 'datetime' not in df.columns:
+            return issues  # Já detectado nas validações básicas
+
+        if len(df) < 2:
+            return issues  # Precisa de pelo menos 2 registros para validar sequência
+
+        # Converter para datetime se ainda não for
+        df_dates = pd.to_datetime(df['datetime'])
+
+        # 1. Verificar duplicatas de data (CRITICAL)
+        duplicated_dates = df_dates.duplicated()
+        if duplicated_dates.any():
+            dup_rows = df[duplicated_dates].index.tolist()
+            unique_dup_dates = df_dates[duplicated_dates].dt.date.unique()
+            issues.append(Issue(
+                type=IssueType.DATE_DUPLICATE,
+                severity=Severity.CRITICAL,
+                description=f"Datas duplicadas encontradas: {len(dup_rows)} registros, {len(unique_dup_dates)} datas únicas",
+                symbol=symbol,
+                affected_rows=dup_rows,
+                suggested_fix="Remover registros duplicados mantendo o mais recente"
+            ))
+
+        # 2. Verificar ordem cronológica (WARNING - pode ser só questão de sort)
+        if not df_dates.is_monotonic_increasing:
+            # Encontrar onde a ordem quebra
+            diff = df_dates.diff()
+            negative_diffs = diff < pd.Timedelta(0)
+            if negative_diffs.any():
+                out_of_order_rows = df[negative_diffs].index.tolist()
+                issues.append(Issue(
+                    type=IssueType.DATE_ORDER,
+                    severity=Severity.WARNING,
+                    description=f"Sequência de datas fora de ordem: {len(out_of_order_rows)} ocorrências",
+                    symbol=symbol,
+                    affected_rows=out_of_order_rows,
+                    suggested_fix="Reordenar DataFrame por data"
+                ))
+
+        # 3. Analisar gaps de mercado (assumindo dados diários)
+        # Calcular diferenças entre datas consecutivas
+        date_diffs = df_dates.diff().dt.days
+
+        # Gap normal de fim de semana = 3 dias (sexta para segunda)
+        # Gap de feriado curto = 4-5 dias
+        # Gap suspeito = > 7 dias
+
+        # Gaps de fim de semana (2-3 dias) são normais
+        weekend_gaps = (date_diffs >= 2) & (date_diffs <= 3)
+        weekend_count = weekend_gaps.sum()
+
+        # Gaps de feriados (4-7 dias) são aceitáveis
+        holiday_gaps = (date_diffs >= 4) & (date_diffs <= 7)
+        holiday_count = holiday_gaps.sum()
+
+        # Gaps suspeitos (> 7 dias) precisam investigação
+        suspicious_gaps = date_diffs > 7
+        if suspicious_gaps.any():
+            gap_rows = df[suspicious_gaps].index.tolist()
+            max_gap = date_diffs.max()
+            issues.append(Issue(
+                type=IssueType.DATE_GAP,
+                severity=Severity.WARNING,
+                description=f"Gaps suspeitos encontrados: {len(gap_rows)} gaps > 7 dias (máximo: {max_gap} dias)",
+                symbol=symbol,
+                affected_rows=gap_rows,
+                suggested_fix="Verificar se são feriados prolongados ou problemas na coleta"
+            ))
+
+        # 4. Verificar se há dados em fins de semana (suspeito para a maioria dos mercados)
+        df_with_weekday = df.copy()
+        df_with_weekday['weekday'] = pd.to_datetime(df['datetime']).dt.dayofweek
+
+        # 5 = Sábado, 6 = Domingo
+        weekend_trading = df_with_weekday['weekday'].isin([5, 6])
+        if weekend_trading.any():
+            weekend_rows = df[weekend_trading].index.tolist()
+            issues.append(Issue(
+                type=IssueType.DATE_GAP,
+                severity=Severity.WARNING,
+                description=f"Negociação em fins de semana detectada: {len(weekend_rows)} registros",
+                symbol=symbol,
+                affected_rows=weekend_rows,
+                suggested_fix="Verificar se o mercado realmente opera nos fins de semana ou remover"
+            ))
+
+        # 5. Verificar padrão geral de frequência
+        # Para dados diários, esperamos gaps principalmente de 1-3 dias
+        single_day_gaps = (date_diffs == 1).sum()
+        total_gaps = len(date_diffs) - 1  # Excluir o primeiro NaN
+
+        if total_gaps > 0:
+            single_day_ratio = single_day_gaps / total_gaps
+
+            # Se menos de 60% são gaps de 1 dia, pode haver muitos dados faltando
+            if single_day_ratio < 0.6:
+                issues.append(Issue(
+                    type=IssueType.DATE_GAP,
+                    severity=Severity.INFO,
+                    description=f"Muitos gaps na série temporal: apenas {single_day_ratio:.1%} são dias consecutivos",
+                    symbol=symbol,
+                    suggested_fix="Verificar se dados estão completos ou se há muitos feriados"
+                ))
+
+        # 6. Log estatísticas temporais para info
+        if total_gaps > 0:
+            issues.append(Issue(
+                type=IssueType.DATE_GAP,
+                severity=Severity.INFO,
+                description=f"Estatísticas temporais: {weekend_count} gaps de fim de semana, {holiday_count} gaps de feriado, {single_day_gaps} dias consecutivos",
+                symbol=symbol,
+                suggested_fix="Informação para análise"
+            ))
+
+        return issues
