@@ -15,6 +15,7 @@ class RetryConfig:
         jitter: bool = True
     ):
         """
+        Args
             max_attempts: Número máximo de tentativas (incluindo a primeira)
             base_delay: Delay inicial em segundos
             max_delay: Delay máximo em segundos
