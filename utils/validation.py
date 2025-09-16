@@ -314,3 +314,146 @@ class FinancialDataValidator:
             ))
 
         return issues
+
+    def _validate_financial_consistency(self, df: pd.DataFrame, symbol: str) -> List[Issue]:
+        """
+        Args:
+            df: DataFrame para validar
+            symbol: Símbolo da ação
+
+        Returns:
+            Lista de issues encontradas
+        """
+        issues = []
+
+        # Verificar se temos as colunas necessárias
+        required_price_cols = ['open', 'high', 'low', 'close']
+        missing_cols = [col for col in required_price_cols if col not in df.columns]
+        if missing_cols:
+            # Já foi detectado nas validações básicas, não duplicar
+            return issues
+
+        # Tolerância para arredondamento (1 centavo)
+        tolerance = 0.01
+
+        # 1. Verificar preços negativos (CRITICAL)
+        for col in required_price_cols:
+            negative_mask = df[col] <= 0
+            if negative_mask.any():
+                negative_rows = df[negative_mask].index.tolist()
+                issues.append(Issue(
+                    type=IssueType.NEGATIVE_PRICE,
+                    severity=Severity.CRITICAL,
+                    description=f"Preços negativos ou zero encontrados em '{col}': {len(negative_rows)} ocorrências",
+                    symbol=symbol,
+                    affected_rows=negative_rows,
+                    suggested_fix=f"Remover linhas com {col} <= 0"
+                ))
+
+        if 'volume' in df.columns:
+            # Volume negativo é impossível
+            negative_volume_mask = df['volume'] < 0
+            if negative_volume_mask.any():
+                negative_vol_rows = df[negative_volume_mask].index.tolist()
+                issues.append(Issue(
+                    type=IssueType.ZERO_VOLUME,
+                    severity=Severity.CRITICAL,
+                    description=f"Volume negativo encontrado: {len(negative_vol_rows)} ocorrências",
+                    symbol=symbol,
+                    affected_rows=negative_vol_rows,
+                    suggested_fix="Remover linhas com volume negativo"
+                ))
+
+            # Volume zero indica falta de liquidez
+            zero_volume_mask = df['volume'] == 0
+            if zero_volume_mask.any():
+                zero_vol_rows = df[zero_volume_mask].index.tolist()
+                issues.append(Issue(
+                    type=IssueType.ZERO_VOLUME,
+                    severity=Severity.WARNING,
+                    description=f"Volume zero encontrado: {len(zero_vol_rows)} ocorrências (falta de liquidez)",
+                    symbol=symbol,
+                    affected_rows=zero_vol_rows,
+                    suggested_fix="Verificar se são feriados ou problemas na coleta"
+                ))
+
+        # Low deve ser <= Open, High, Close
+        low_open_violations = (df['low'] > df['open'] + tolerance)
+        if low_open_violations.any():
+            violation_rows = df[low_open_violations].index.tolist()
+            issues.append(Issue(
+                type=IssueType.PRICE_INCONSISTENCY,
+                severity=Severity.WARNING,
+                description=f"Low > Open encontrado: {len(violation_rows)} ocorrências",
+                symbol=symbol,
+                affected_rows=violation_rows,
+                suggested_fix="Verificar dados da fonte ou ajustar para consistência"
+            ))
+
+        low_high_violations = (df['low'] > df['high'] + tolerance)
+        if low_high_violations.any():
+            violation_rows = df[low_high_violations].index.tolist()
+            issues.append(Issue(
+                type=IssueType.PRICE_INCONSISTENCY,
+                severity=Severity.CRITICAL,  # Este é realmente impossível
+                description=f"Low > High encontrado: {len(violation_rows)} ocorrências (impossível)",
+                symbol=symbol,
+                affected_rows=violation_rows,
+                suggested_fix="Remover linhas com Low > High"
+            ))
+
+        low_close_violations = (df['low'] > df['close'] + tolerance)
+        if low_close_violations.any():
+            violation_rows = df[low_close_violations].index.tolist()
+            issues.append(Issue(
+                type=IssueType.PRICE_INCONSISTENCY,
+                severity=Severity.WARNING,
+                description=f"Low > Close encontrado: {len(violation_rows)} ocorrências",
+                symbol=symbol,
+                affected_rows=violation_rows,
+                suggested_fix="Verificar dados da fonte"
+            ))
+
+        # High deve ser >= Open, Low, Close
+        high_open_violations = (df['high'] + tolerance < df['open'])
+        if high_open_violations.any():
+            violation_rows = df[high_open_violations].index.tolist()
+            issues.append(Issue(
+                type=IssueType.PRICE_INCONSISTENCY,
+                severity=Severity.WARNING,
+                description=f"High < Open encontrado: {len(violation_rows)} ocorrências",
+                symbol=symbol,
+                affected_rows=violation_rows,
+                suggested_fix="Verificar dados da fonte"
+            ))
+
+        high_close_violations = (df['high'] + tolerance < df['close'])
+        if high_close_violations.any():
+            violation_rows = df[high_close_violations].index.tolist()
+            issues.append(Issue(
+                type=IssueType.PRICE_INCONSISTENCY,
+                severity=Severity.WARNING,
+                description=f"High < Close encontrado: {len(violation_rows)} ocorrências",
+                symbol=symbol,
+                affected_rows=violation_rows,
+                suggested_fix="Verificar dados da fonte"
+            ))
+
+        # Detectar preços todos iguais (muito raro)
+        all_equal_mask = (
+            (abs(df['open'] - df['high']) <= tolerance) &
+            (abs(df['open'] - df['low']) <= tolerance) &
+            (abs(df['open'] - df['close']) <= tolerance)
+        )
+        if all_equal_mask.any():
+            equal_rows = df[all_equal_mask].index.tolist()
+            issues.append(Issue(
+                type=IssueType.PRICE_INCONSISTENCY,
+                severity=Severity.WARNING,
+                description=f"Preços OHLC idênticos encontrados: {len(equal_rows)} ocorrências (muito raro)",
+                symbol=symbol,
+                affected_rows=equal_rows,
+                suggested_fix="Verificar se são realmente dias sem movimento ou erro na coleta"
+            ))
+
+        return issues
