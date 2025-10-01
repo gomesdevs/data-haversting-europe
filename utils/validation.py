@@ -23,20 +23,26 @@ class IssueType(Enum):
     # Básicos
     MISSING_DATA = "missing_data"
     INVALID_TYPE = "invalid_type"
+    WRONG_TYPE = "wrong_type"
 
     # Financeiros
     NEGATIVE_PRICE = "negative_price"
     ZERO_VOLUME = "zero_volume"
+    VOLUME_ZERO = "volume_zero"  # Alias for consistency
     PRICE_INCONSISTENCY = "price_inconsistency"
 
     # Temporais
     DATE_GAP = "date_gap"
     DATE_DUPLICATE = "date_duplicate"
+    DUPLICATE_DATES = "duplicate_dates"  # Alias for consistency
     DATE_ORDER = "date_order"
+    OUT_OF_ORDER = "out_of_order"  # Alias for consistency
+    MISSING_DATES = "missing_dates"
 
-    # Outliers
+    # Anomalias de mercado
     EXTREME_VARIATION = "extreme_variation"
     VOLUME_ANOMALY = "volume_anomaly"
+    OUTLIER = "outlier"
 
 
 @dataclass
@@ -148,7 +154,7 @@ class FinancialDataValidator:
                 "symbol": symbol,
                 "rows": len(df),
                 "columns": list(df.columns),
-                "date_range": f"{df['date'].min()} to {df['date'].max()}" if 'date' in df.columns else "unknown"
+                "date_range": f"{df['datetime'].min()} to {df['datetime'].max()}" if 'datetime' in df.columns else "unknown"
             }
         )
 
@@ -587,3 +593,314 @@ class FinancialDataValidator:
             ))
 
         return issues
+
+    def _validate_market_anomalies(self, df: pd.DataFrame, symbol: str) -> List[Issue]:
+        """
+        Valida anomalias de mercado:
+        - Variações de preço extremas (> 20% em um dia)
+        - Volume zero ou muito baixo
+        - Outliers estatísticos em OHLCV
+
+        Args:
+            df: DataFrame para validar
+            symbol: Símbolo da ação
+
+        Returns:
+            Lista de issues encontradas
+        """
+        issues = []
+
+        if df.empty:
+            return issues  # Já detectado nas validações básicas
+
+        if len(df) < 2:
+            return issues  # Precisa de pelo menos 2 registros
+
+        # 1. Variações de preço diárias extremas (> 20%)
+        if 'close' in df.columns:
+            df_sorted = df.sort_values('datetime')
+            price_changes = df_sorted['close'].pct_change().abs()
+
+            extreme_variations = price_changes > self.max_daily_variation
+            if extreme_variations.any():
+                extreme_count = extreme_variations.sum()
+                max_variation = price_changes[extreme_variations].max()
+                extreme_dates = df_sorted.loc[extreme_variations, 'date'].tolist()
+
+                issues.append(Issue(
+                    type=IssueType.EXTREME_VARIATION,
+                    severity=Severity.WARNING,
+                    description=f"Variações extremas de preço (>{self.max_daily_variation*100:.0f}%) em {extreme_count} dias",
+                    symbol=symbol,
+                    affected_rows=None,
+                    suggested_fix="Verificar eventos corporativos (splits, dividendos) ou erros nos dados"
+                ))
+
+                self.logger.warning(
+                    f"Variações extremas de preço detectadas",
+                    extra={
+                        "symbol": symbol,
+                        "count": extreme_count,
+                        "max_variation": f"{max_variation*100:.2f}%",
+                        "dates": extreme_dates[:5]
+                    }
+                )
+
+        # 2. Volume zero ou muito baixo
+        if 'volume' in df.columns:
+            zero_volume = df['volume'] == 0
+            zero_count = zero_volume.sum()
+
+            if zero_count > 0:
+                zero_dates = df.loc[zero_volume, 'date'].tolist()
+                severity = Severity.WARNING if zero_count < len(df) * 0.1 else Severity.CRITICAL
+
+                issues.append(Issue(
+                    type=IssueType.VOLUME_ZERO,
+                    severity=severity,
+                    description=f"Volume zero em {zero_count} de {len(df)} dias ({zero_count/len(df)*100:.1f}%)",
+                    symbol=symbol,
+                    affected_rows=None,
+                    suggested_fix="Verificar se mercado estava fechado ou se há erro nos dados"
+                ))
+
+                self.logger.warning(
+                    f"Dias com volume zero detectados",
+                    extra={
+                        "symbol": symbol,
+                        "count": zero_count,
+                        "percentage": f"{zero_count/len(df)*100:.1f}%",
+                        "dates": zero_dates[:5]
+                    }
+                )
+
+        # 3. Outliers estatísticos usando IQR (Interquartile Range)
+        numeric_cols = ['open', 'high', 'low', 'close', 'volume']
+        for col in numeric_cols:
+            if col not in df.columns:
+                continue
+
+            # Calcular IQR
+            Q1 = df[col].quantile(0.25)
+            Q3 = df[col].quantile(0.75)
+            IQR = Q3 - Q1
+
+            # Limites para outliers (1.5 * IQR é o critério padrão)
+            lower_bound = Q1 - 1.5 * IQR
+            upper_bound = Q3 + 1.5 * IQR
+
+            outliers = (df[col] < lower_bound) | (df[col] > upper_bound)
+            outlier_count = outliers.sum()
+
+            if outlier_count > 0:
+                outlier_dates = df.loc[outliers, 'date'].tolist()
+                outlier_values = df.loc[outliers, col].tolist()
+
+                issues.append(Issue(
+                    type=IssueType.OUTLIER,
+                    severity=Severity.INFO,
+                    description=f"Outliers estatísticos em '{col}': {outlier_count} valores fora do intervalo [{lower_bound:.2f}, {upper_bound:.2f}]",
+                    symbol=symbol,
+                    affected_rows=None,
+                    suggested_fix="Analisar se são eventos legítimos de mercado"
+                ))
+
+                self.logger.info(
+                    f"Outliers detectados em {col}",
+                    extra={
+                        "symbol": symbol,
+                        "column": col,
+                        "count": outlier_count,
+                        "bounds": f"[{lower_bound:.2f}, {upper_bound:.2f}]",
+                        "dates": outlier_dates[:5],
+                        "values": [float(v) for v in outlier_values[:5]]
+                    }
+                )
+
+        return issues
+
+    def _apply_corrections(self, df: pd.DataFrame, symbol: str) -> Tuple[pd.DataFrame, List[Issue]]:
+        """
+        Aplica correções automáticas aos dados quando auto_correct está ativado.
+
+        Correções aplicadas:
+        - Remove registros duplicados (mantém o mais recente)
+        - Ordena dados cronologicamente
+        - Interpola valores ausentes (máximo de 2 dias consecutivos)
+        - Corrige tipos de dados inconsistentes
+
+        Args:
+            df: DataFrame para corrigir
+            symbol: Símbolo da ação
+
+        Returns:
+            Tupla com (DataFrame corrigido, Lista de issues de correção)
+        """
+        correction_issues = []
+        corrected = df.copy()
+
+        self.logger.info(
+            f"Iniciando auto-correção para {symbol}",
+            extra={
+                "rows_before": len(corrected),
+                "symbol": symbol
+            }
+        )
+
+        # 1. Remover duplicados (mantém o último)
+        duplicates_before = corrected.duplicated(subset=['date'], keep='last').sum()
+        if duplicates_before > 0:
+            corrected = corrected.drop_duplicates(subset=['date'], keep='last')
+            correction_issues.append(Issue(
+                type=IssueType.DUPLICATE_DATES,
+                severity=Severity.INFO,
+                description=f"Removidos {duplicates_before} registros duplicados",
+                symbol=symbol,
+                affected_rows=None,
+                suggested_fix=f"Mantido registro mais recente para cada data"
+            ))
+            self.logger.info(
+                f"Duplicados removidos: {duplicates_before}",
+                extra={"symbol": symbol, "removed": duplicates_before}
+            )
+
+        # 2. Ordenar cronologicamente
+        if 'datetime' in corrected.columns:
+            was_sorted = corrected['datetime'].is_monotonic_increasing
+            corrected = corrected.sort_values('datetime').reset_index(drop=True)
+            if not was_sorted:
+                correction_issues.append(Issue(
+                    type=IssueType.OUT_OF_ORDER,
+                    severity=Severity.INFO,
+                    description="Dados reordenados cronologicamente",
+                    symbol=symbol,
+                    affected_rows=None,
+                    suggested_fix="Ordenado por datetime crescente"
+                ))
+                self.logger.info(
+                    f"Dados reordenados cronologicamente",
+                    extra={"symbol": symbol}
+                )
+
+        # 3. Interpolar valores ausentes (máximo de 2 dias consecutivos)
+        if 'datetime' in corrected.columns and len(corrected) > 1:
+            corrected['datetime'] = pd.to_datetime(corrected['datetime'])
+            date_range = pd.date_range(
+                start=corrected['datetime'].min(),
+                end=corrected['datetime'].max(),
+                freq='D'
+            )
+
+            # Identificar datas ausentes
+            existing_dates = set(corrected['datetime'].dt.date)
+            missing_dates = [d for d in date_range if d.date() not in existing_dates]
+
+            # Agrupar datas ausentes em sequências consecutivas
+            if missing_dates:
+                missing_sequences = []
+                current_seq = [missing_dates[0]]
+
+                for i in range(1, len(missing_dates)):
+                    if (missing_dates[i] - missing_dates[i-1]).days == 1:
+                        current_seq.append(missing_dates[i])
+                    else:
+                        missing_sequences.append(current_seq)
+                        current_seq = [missing_dates[i]]
+                missing_sequences.append(current_seq)
+
+                # Interpolar sequências de até 2 dias
+                interpolated_count = 0
+                for seq in missing_sequences:
+                    if len(seq) <= self.max_missing_days:
+                        # Criar registros para interpolar
+                        for missing_date in seq:
+                            new_row = pd.DataFrame({
+                                'datetime': [missing_date],
+                                'date': [missing_date.strftime('%Y-%m-%d')],
+                                'symbol': [symbol],
+                                'open': [np.nan],
+                                'high': [np.nan],
+                                'low': [np.nan],
+                                'close': [np.nan],
+                                'adj_close': [np.nan],
+                                'volume': [0],
+                                'currency': [corrected['currency'].iloc[0] if 'currency' in corrected.columns else 'USD'],
+                                'exchange': [corrected['exchange'].iloc[0] if 'exchange' in corrected.columns else 'UNKNOWN']
+                            })
+                            corrected = pd.concat([corrected, new_row], ignore_index=True)
+                            interpolated_count += 1
+
+                if interpolated_count > 0:
+                    # Reordenar após adicionar registros
+                    corrected = corrected.sort_values('datetime').reset_index(drop=True)
+
+                    # Interpolar valores numéricos (linear)
+                    numeric_cols = ['open', 'high', 'low', 'close', 'adj_close']
+                    for col in numeric_cols:
+                        if col in corrected.columns:
+                            corrected[col] = corrected[col].interpolate(method='linear', limit=self.max_missing_days)
+
+                    correction_issues.append(Issue(
+                        type=IssueType.MISSING_DATES,
+                        severity=Severity.INFO,
+                        description=f"Interpolados {interpolated_count} dias ausentes (máx {self.max_missing_days} consecutivos)",
+                        symbol=symbol,
+                        affected_rows=None,
+                        suggested_fix=f"Interpolação linear aplicada"
+                    ))
+                    self.logger.info(
+                        f"Valores interpolados: {interpolated_count} dias",
+                        extra={"symbol": symbol, "interpolated": interpolated_count}
+                    )
+
+        # 4. Corrigir tipos de dados
+        type_corrections = 0
+        expected_types = {
+            'open': 'float64',
+            'high': 'float64',
+            'low': 'float64',
+            'close': 'float64',
+            'adj_close': 'float64',
+            'volume': 'int64'
+        }
+
+        for col, expected_type in expected_types.items():
+            if col in corrected.columns:
+                if corrected[col].dtype != expected_type:
+                    try:
+                        if expected_type == 'int64':
+                            # Garantir que volume não tem NaN antes de converter
+                            corrected[col] = corrected[col].fillna(0).astype(expected_type)
+                        else:
+                            corrected[col] = corrected[col].astype(expected_type)
+                        type_corrections += 1
+                    except Exception as e:
+                        self.logger.warning(
+                            f"Falha ao corrigir tipo de {col}",
+                            extra={"symbol": symbol, "column": col, "error": str(e)}
+                        )
+
+        if type_corrections > 0:
+            correction_issues.append(Issue(
+                type=IssueType.WRONG_TYPE,
+                severity=Severity.INFO,
+                description=f"Corrigidos tipos de dados em {type_corrections} colunas",
+                symbol=symbol,
+                affected_rows=None,
+                suggested_fix="Tipos convertidos para schema esperado"
+            ))
+            self.logger.info(
+                f"Tipos de dados corrigidos: {type_corrections} colunas",
+                extra={"symbol": symbol, "corrections": type_corrections}
+            )
+
+        self.logger.info(
+            f"Auto-correção concluída para {symbol}",
+            extra={
+                "rows_after": len(corrected),
+                "corrections_applied": len(correction_issues),
+                "symbol": symbol
+            }
+        )
+
+        return corrected, correction_issues
