@@ -15,6 +15,7 @@ import time
 
 from core.alphavantage_client import AlphaVantageClient, default_alphavantage_client
 from core.logger import setup_logger
+from utils.validation import FinancialDataValidator, ValidationResult, Severity
 
 
 class ChartDataCollector:
@@ -52,6 +53,7 @@ class ChartDataCollector:
         """
         self.client = client or default_alphavantage_client
         self.logger = setup_logger("scraper.endpoints.chart")
+        self.validator = FinancialDataValidator(auto_correct=True)
 
         self.logger.info(
             "Chart data collector inicializado (Alpha Vantage)",
@@ -265,56 +267,6 @@ class ChartDataCollector:
 
         return df
 
-    def _validate_dataframe(self, df: pd.DataFrame, symbol: str) -> Tuple[bool, List[str]]:
-        """
-        Valida qualidade dos dados no DataFrame.
-
-        Args:
-            df: DataFrame para validar
-            symbol: Símbolo da ação
-
-        Returns:
-            Tuple (is_valid, list_of_issues)
-        """
-        issues = []
-
-        # Verificar se há dados suficientes
-        if len(df) < 2:
-            issues.append(f"Dados insuficientes: apenas {len(df)} registros")
-
-        # Verificar dados de preço básicos
-        required_columns = ['open', 'high', 'low', 'close', 'volume']
-        for col in required_columns:
-            if col not in df.columns:
-                issues.append(f"Coluna obrigatória ausente: {col}")
-            elif df[col].isna().all():
-                issues.append(f"Coluna {col} está completamente vazia")
-
-        # Verificar lógica de preços (high >= low, etc.)
-        if 'high' in df.columns and 'low' in df.columns:
-            invalid_hl = df[df['high'] < df['low']]
-            if len(invalid_hl) > 0:
-                issues.append(f"{len(invalid_hl)} registros com high < low")
-
-        # Verificar preços negativos
-        price_columns = ['open', 'high', 'low', 'close']
-        for col in price_columns:
-            if col in df.columns:
-                negative_prices = df[df[col] <= 0]
-                if len(negative_prices) > 0:
-                    issues.append(f"{len(negative_prices)} preços negativos/zero na coluna {col}")
-
-        # Verificar continuidade temporal (gaps grandes)
-        if len(df) > 1:
-            time_diffs = df['datetime'].diff().dt.total_seconds()
-            # Para dados diários, gap de mais de 7 dias é suspeito
-            large_gaps = time_diffs[time_diffs > 7 * 24 * 3600]
-            if len(large_gaps) > len(df) * 0.1:  # Mais de 10% gaps grandes
-                issues.append(f"Muitos gaps temporais: {len(large_gaps)} gaps > 7 dias")
-
-        is_valid = len(issues) == 0
-        return is_valid, issues
-
     def get_historical_data(
         self,
         symbol: str,
@@ -362,24 +314,52 @@ class ChartDataCollector:
 
             # Validar dados se solicitado
             if validate:
-                is_valid, issues = self._validate_dataframe(df, symbol)
+                validation_result = self.validator.validate(df, symbol)
 
-                if not is_valid:
-                    self.logger.warning(
-                        f"Dados com problemas de qualidade para {symbol}",
+                # Log detalhado dos resultados da validação
+                self.logger.info(
+                    f"Validação de dados concluída para {symbol}",
+                    extra={
+                        "symbol": symbol,
+                        "is_valid": validation_result.is_valid,
+                        "total_issues": len(validation_result.issues),
+                        "critical_issues": len(validation_result.critical_issues),
+                        "warning_issues": len(validation_result.warning_issues),
+                        "has_corrections": validation_result.corrected_data is not None
+                    }
+                )
+
+                # Rejeitar se há issues críticas
+                if not validation_result.is_valid:
+                    critical_descriptions = [issue.description for issue in validation_result.critical_issues]
+                    self.logger.error(
+                        f"Dados rejeitados para {symbol} - issues críticas encontradas",
                         extra={
                             "symbol": symbol,
-                            "issues": issues,
-                            "records_count": len(df)
+                            "critical_issues": critical_descriptions,
+                            "total_records": len(df)
+                        }
+                    )
+                    raise ValueError(f"Dados inválidos para {symbol}: {'; '.join(critical_descriptions)}")
+
+                # Usar dados corrigidos se disponíveis
+                if validation_result.corrected_data is not None:
+                    df = validation_result.corrected_data
+                    self.logger.info(
+                        f"Usando dados corrigidos para {symbol}",
+                        extra={
+                            "symbol": symbol,
+                            "corrections_applied": True,
+                            "final_records": len(df)
                         }
                     )
 
-                    # Decidir se rejeitar ou aceitar com warning
-                    critical_issues = [issue for issue in issues if
-                                     'ausente' in issue or 'insuficientes' in issue]
-
-                    if critical_issues:
-                        raise ValueError(f"Dados críticos inválidos para {symbol}: {critical_issues}")
+                # Log warnings para monitoramento
+                for warning_issue in validation_result.warning_issues:
+                    self.logger.warning(
+                        f"Issue de qualidade detectada: {warning_issue.description}",
+                        extra=warning_issue.to_dict()
+                    )
 
             collection_time = time.time() - start_time
 
@@ -390,7 +370,7 @@ class ChartDataCollector:
                     "period": period,
                     "interval": interval,
                     "records_collected": len(df),
-                    "date_range": f"{df['date'].min()} to {df['date'].max()}",
+                    "date_range": f"{df['datetime'].min()} to {df['datetime'].max()}" if 'datetime' in df.columns else "unknown",
                     "collection_time_seconds": round(collection_time, 2),
                     "data_quality": "validated" if validate else "not_validated"
                 }
