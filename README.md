@@ -1,53 +1,53 @@
-# 🇪🇺 Data Harvesting Europe
+# 🚀 European Stock Data Scraper - Production Ready
 
-A robust Python-based financial data collection system specifically designed for European stock markets, with advanced features for data forecasting and analysis.
+Sistema completo de coleta, validação e análise de dados financeiros de ações europeias, **production-ready** para projetos de **forecasting** e análise quantitativa.
 
-![Python](https://img.shields.io/badge/Python-3.8+-blue.svg)
-![License](https://img.shields.io/badge/License-CC%20BY--NC%204.0-green.svg)
-![Status](https://img.shields.io/badge/Status-Active-brightgreen.svg)
-![API](https://img.shields.io/badge/API-AlphaVantage-orange.svg)
-![Data](https://img.shields.io/badge/Data-European%20Markets-blue.svg)
+![Status](https://img.shields.io/badge/status-production--ready-green)
+![Python](https://img.shields.io/badge/python-3.8+-blue)
+![API](https://img.shields.io/badge/API-AlphaVantage-orange)
+![License](https://img.shields.io/badge/license-MIT-blue)
 
-## 📋 Table of Contents
+---
 
-- [Overview](#overview)
-- [Features](#features)
-- [Architecture](#architecture)
-- [Installation](#installation)
-- [Configuration](#configuration)
-- [Quick Start](#quick-start)
-- [Usage Examples](#usage-examples)
-- [Data Pipelines](#data-pipelines)
-- [Storage Options](#storage-options)
-- [Testing](#testing)
-- [Project Structure](#project-structure)
-- [API Documentation](#api-documentation)
-- [Contributing](#contributing)
-- [License](#license)
+## 📋 Índice
 
-## 🎯 Overview
+1. [Visão Geral](#-visão-geral)
+2. [Features Principais](#-features-principais)
+3. [Instalação Rápida](#-instalação-rápida)
+4. [Uso Rápido](#-uso-rápido)
+5. [Pipelines Automatizadas](#-pipelines-automatizadas)
+6. [Analytics e Relatórios](#-analytics-e-relatórios)
+7. [Estrutura de Dados](#-estrutura-de-dados)
+8. [Documentação Completa](#-documentação)
 
-**Data Harvesting Europe** is a comprehensive financial data collection and processing system tailored for European stock markets. Built with Python, it provides reliable, efficient, and scalable data harvesting capabilities with built-in support for forecasting analysis using Alpha Vantage API and other financial data sources.
+---
 
-### Key Objectives
+## 🎯 Visão Geral
 
-- 📈 **Financial Data Collection**: Harvest historical and real-time data from European stock exchanges via Alpha Vantage API
-- 🔄 **Rate-Limited Processing**: Intelligent rate limiting to respect API constraints (5 calls/min, 500 calls/day for free tier)
-- 📊 **Forecasting-Ready Data**: Clean, validated datasets optimized for predictive analysis
-- 🚀 **Async/Sync Support**: Both synchronous and asynchronous data collection methods
-- 🛡️ **Robust Error Handling**: Comprehensive retry mechanisms and error recovery
-- 🗄️ **Multiple Storage Options**: Support for Parquet files and PostgreSQL database
-- 🔧 **Configurable Pipelines**: Modular data pipelines for different data types (prices, earnings, fundamentals)
+Sistema **production-ready** para coleta automatizada de dados financeiros de ações europeias via **Alpha Vantage API**.
 
-## ✨ Features
+### ⚡ Por que usar este sistema?
 
-### 🎯 Core Features
+✅ **20+ anos de histórico** para forecasting robusto  
+✅ **Validação 4-stage** com auto-correção inteligente  
+✅ **Storage otimizado** (Parquet + Snappy ~50% compressão)  
+✅ **Scheduler automático** (Windows/Linux)  
+✅ **Analytics engine** com métricas financeiras completas  
+✅ **Relatórios HTML** interativos e profissionais  
 
-- **Alpha Vantage Integration**: Official Alpha Vantage API integration with secure key management
-- **Multi-Exchange Support**: European stock exchanges (Euronext Amsterdam, Paris, Brussels, LSE)
-- **Historical Data Collection**: Configurable periods (daily, weekly, monthly, intraday)
-- **Real-time Price Tracking**: Latest price and volume data with market metadata
-- **Bulk Data Processing**: Efficient batch collection for multiple symbols with concurrency control
+### � Cobertura
+
+**65+ símbolos europeus**:
+- 🇩🇪 Alemanha (DAX): SAP, Siemens, Deutsche Bank, BMW
+- 🇳🇱 Holanda (Euronext): ASML, Philips, Adyen
+- 🇫🇷 França (CAC 40): LVMH, Airbus, L'Oréal, BNP
+- 🇬🇧 UK (LSE): Shell, BP
+- 🇨🇭 Suíça: Nestlé, Novartis
+- 🇪🇸 Espanha (IBEX): Santander, Iberdrola
+- 🇮🇹 Itália (FTSE MIB): Enel, ENI
+- 🇸🇪 🇫🇮 🇩🇰 Nordic: Volvo, Ericsson, Nokia, Ørsted
+
+---
 - **Data Validation**: Built-in data quality checks for financial and temporal validation
 
 ### 🔧 Technical Features
