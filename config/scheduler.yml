@@ -1,0 +1,78 @@
+# Scheduler Configuration
+# =======================
+# Configuração para automação de pipelines de coleta de dados
+
+# Pipeline de Preços Diários
+# ---------------------------
+daily_price_pipeline:
+  enabled: true
+
+  # Agendamento (formato cron)
+  # minute hour day month weekday
+  # 0 18 * * * = Todo dia às 18:00 UTC (após fechamento mercados EU)
+  schedule: cron
+  cron: "0 18 * * *"
+  timezone: UTC
+
+  # Símbolos específicos (null = todos do tickers_europe.yml)
+  symbols: null
+
+  # Gerar relatórios HTML de qualidade
+  generate_report: true
+
+  # Retry em caso de falha
+  max_retries: 3
+  retry_delay_minutes: 30
+
+  # Notificações (opcional - implementar futuramente)
+  notifications:
+    email:
+      enabled: false
+      recipients: []
+    webhook:
+      enabled: false
+      url: null
+
+# Pipeline de Fundamentos (Semanal)
+# ----------------------------------
+weekly_fundamentals_pipeline:
+  enabled: false  # Desabilitada até implementação
+  schedule: cron
+  cron: "0 0 * * 0"  # Domingo 00:00 UTC
+  timezone: UTC
+  max_retries: 2
+
+# Pipeline de Earnings (Trimestral)
+# ----------------------------------
+quarterly_earnings_pipeline:
+  enabled: false  # Desabilitada até implementação
+  schedule: cron
+  cron: "0 2 1 */3 *"  # Primeiro dia de cada trimestre às 02:00
+  timezone: UTC
+  max_retries: 2
+
+# Configurações Globais
+# ----------------------
+global:
+  # Diretório de dados
+  data_dir: data
+
+  # Diretório de logs
+  logs_dir: logs
+
+  # Timeout máximo por pipeline (segundos)
+  max_execution_time: 7200  # 2 horas
+
+  # Health checks
+  health_check:
+    enabled: false
+    url: null  # Ex: https://hc-ping.com/your-uuid
+
+# Horários dos Mercados Europeus (para referência)
+# -------------------------------------------------
+# LSE (London):     08:00 - 16:30 GMT
+# Euronext:         09:00 - 17:30 CET
+# Frankfurt (XETRA): 09:00 - 17:30 CET
+# Swiss Exchange:   09:00 - 17:30 CET
+#
+# Recomendação: Executar após 18:00 UTC para garantir dados completos
