@@ -39,8 +39,7 @@ from datetime import datetime, timedelta
 import time
 import json
 
-from core.alphavantage_client import AlphaVantageClient, default_alphavantage_client
-from endpoints.chart import ChartDataCollector
+from core.multi_api_client import default_multi_client
 from utils.validation import FinancialDataValidator
 from storage.writer_parquet import ParquetWriter
 from storage.layout import StorageLayout
@@ -81,9 +80,9 @@ class DailyPricePipeline:
         # Setup logger
         self.logger = setup_logger('scraper.pipeline_daily')
 
-        # Inicializar componentes
-        self.client = default_alphavantage_client  # Já é uma instância
-        self.collector = ChartDataCollector(self.client)
+    # Inicializar componentes (multi-provider)
+    self.client = default_multi_client
+    self.collector = None
         self.validator = FinancialDataValidator()
         self.writer = ParquetWriter(data_dir)
         self.layout = StorageLayout(data_dir)
@@ -202,9 +201,10 @@ class DailyPricePipeline:
             print(f"  📡 Coletando dados históricos...")
             start_time = time.time()
 
-            df = self.collector.get_historical_data(
+            # Use multi-provider client (Yahoo -> Twelve Data -> AlphaVantage)
+            df = self.client.get_historical_data(
                 symbol=symbol,
-                period='max',  # Máximo disponível (20+ anos)
+                period='max',
                 interval='1d'
             )
 
